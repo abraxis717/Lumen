@@ -25,6 +25,40 @@ class Chronicle:
         self._events: List[Event] = []
         self._head: str = "0" * 64  # genesis null hash
 
+    @classmethod
+    def load_from_jsonl(cls, filepath: str) -> "Chronicle":
+        """Load events from a JSONL file into a new Chronicle instance.
+
+        Args:
+            filepath: Path to the JSONL file.
+
+        Returns:
+            A Chronicle instance populated with the events from the file.
+        """
+        chronicle = cls()
+        with open(filepath, "r") as f:
+            for line_num, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        f"Invalid JSON on line {line_num} in {filepath}: {exc}"
+                    ) from exc
+                chronicle._events.append(
+                    Event(
+                        step=data["step"],
+                        action=data["action"],
+                        agent=data["agent"],
+                        payload=data["payload"],
+                        prev_hash=data.get("prev_hash", "0" * 64),
+                        hash=data.get("hash", ""),
+                    )
+                )
+        return chronicle
+
     # ── public API ───────────────────────────────────────────────────
     def append(self, event: Event) -> None:
         """Append an event — rejects if chain is broken."""
