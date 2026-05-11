@@ -48,6 +48,11 @@ class SQLiteChronicle:
         self._head: str = "0" * 64  # genesis null hash
         self._next_id: int = 0
 
+    @property
+    def _events(self) -> List[Event]:
+        """Return all events for compatibility with Chronicle._events."""
+        return self.get_chain()
+
     @contextmanager
     def _cursor(self, commit: bool = True):
         """Context manager for cursor lifecycle."""
