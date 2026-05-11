@@ -215,6 +215,33 @@ def main():
 
     conductor = Conductor(kernel, world)
 
+    # ── Phase 3: Wire live GGUF model into OracleAgent ────────────────
+    llm_client = None
+    model = None
+    GGUF_PATH = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "models", "gguf", "Qwen3.5-0.8B-Q4_K_M.gguf",
+    )
+
+    try:
+        from kernel.mobile.model_loader import MobileModel
+        from kernel.mobile.llm_client import MobileModelLLMClient
+
+        model = MobileModel(GGUF_PATH, n_gpu_layers=-1, n_ctx=512)
+        llm_client = MobileModelLLMClient(model, max_tokens=128, temperature=0.7)
+        print(f"\n  [LiveInference] GGUF model loaded: {GGUF_PATH}")
+        print(f"  [LiveInference] OracleAgent will use live LLM inference.")
+    except ImportError as exc:
+        print(f"\n  [LiveInference] WARNING: {exc}")
+        print(f"  [LiveInference] llama-cpp-python not installed. Falling back to mock.")
+        print(f"  [LiveInference] Install with: pip install llama-cpp-python")
+        llm_client = None
+    except Exception as exc:
+        print(f"\n  [LiveInference] WARNING: Failed to load GGUF model: {exc}")
+        print(f"  [LiveInference] Falling back to mock LLM.")
+        llm_client = None
+    # ──────────────────────────────────────────────────────────────────
+
     from kernel.crypto.reality_registry import HardwareSensor
     from kernel.council.oracle_agent import OracleAgent
     from kernel.council.math_physics_agents import EulerAgent, GaussAgent, NewtonAgent
@@ -227,7 +254,11 @@ def main():
 
     sensor = HardwareSensor("HW_THERM_01", world)
     conductor.register(
-        OracleAgent(sensor, context_fn=_context_fn),
+        OracleAgent(
+            sensor,
+            llm_client=llm_client,
+            context_fn=_context_fn,
+        ),
         EulerAgent(),
         GaussAgent(),
         NewtonAgent(),
@@ -516,6 +547,38 @@ def main():
     )
     print(f"  [DistributedConsensus] Federation summary: {dc.summary()}")
     print(f"{'='*60}")
+
+    # ── Phase 3: Final output — live belief + constitutional validity ──
+    # Find the last chronicle event that originated from the oracle
+    oracle_events = [
+        e for e in chronicle._events
+        if e.agent == "Oracle" or "oracle" in str(e.payload)
+    ]
+    if oracle_events:
+        last_oracle = oracle_events[-1]
+        claim_text = (
+            last_oracle.payload.get("text", "")
+            if isinstance(last_oracle.payload, dict)
+            else str(last_oracle.payload)
+        )
+        print(f"\n{'='*60}")
+        print(f"  FINAL BELIEF (from live/inference oracle):")
+        print(f"  {'-'*60}")
+        print(f"  Claim: {claim_text[:120]}{'...' if len(claim_text) > 120 else ''}")
+        print(f"  Agent: {last_oracle.agent}")
+        print(f"  Step:  {last_oracle.step}")
+        print(f"  Hash:  {last_oracle.hash[:16]}...")
+
+        # Check constitutional validity
+        is_valid = constitutional.is_valid(claim_text)
+        print(f"  Constitutional validity: {'VALID' if is_valid else 'INVALID'}")
+
+        # Show model status
+        if model is not None:
+            print(f"  Model: GGUF live inference ({model.model_path})")
+        else:
+            print(f"  Model: MOCK fallback (llama-cpp-python not available)")
+    # ──────────────────────────────────────────────────────────────────
 
     print(f"{'='*60}\n")
 
