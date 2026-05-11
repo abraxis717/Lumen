@@ -117,8 +117,13 @@ python3 test_vector.py
 | Materialize | No external deps (JSON fallback) |
 | Vector sync | `qdrant-client` (optional, JSON fallback) |
 
-## Status
+   ## Status
 
 - **Phase 1**: Core kernel, constitution, membrane, SQLite WAL, mobile GGUF loader ✓
 - **Phase 2**: Materialization pipeline (Obsidian, CDC, Vector sync) ✓
 - **Phase 3**: Live GGUF inference through governance membrane ✓
+
+> **Core governed kernel + live GGUF inference now demonstrable.**
+> Full Cathedral boot + mesh in progress.
+
+See [STATUS.md](STATUS.md) for detailed architecture status, component table, and test results.

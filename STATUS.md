@@ -94,12 +94,59 @@ All tests passed.
   Generated text (first 120 chars):  [Lumen-generated response]
 ```
 
-## Architecture status
+    ## Architecture status
 
-- **Phase 1**: Core kernel, constitution, membrane, SQLite WAL, mobile GGUF loader ✓
-- **Phase 2**: Materialization pipeline (Obsidian, CDC, Vector sync) ✓
-- **Phase 3**: Live GGUF inference through governance membrane ✓
+|| Component | Status | Notes |
+||---|---|---|
+|| `kernel/core/chronicle_jsonl.py` | ✓ | SQLite WAL + JSONL append-only event log |
+|| `kernel/constitutional/` | ✓ | ConstitutionalKernel with load_defaults(), axiom validation |
+|| `kernel/crypto/` | ✓ | IngressGate, RealityRegistry, SophiacManifold, AegisKernel |
+|| `kernel/council/oracle_agent.py` | ✓ | OracleAgent + GovernedCouncil + Math/Physics/Mitigation agents |
+|| `kernel/epistemics/` | ✓ | EpistemicGraph, BeliefNode, governance relationships |
+|| `kernel/memory/` | ✓ | MemoryGovernor, StratifiedRetriever |
+|| `kernel/mobile/model_loader.py` | ✓ | MobileModel — GGUF wrapper with quantized model path |
+|| `kernel/mobile/llm_client.py` | ✓ | **NEW** MobileModelLLMClient — adapts GGUF to OracleAgent callable interface |
+|| `kernel/observability/` | ✓ | LineageTracker, GovernanceDriftMonitor |
+|| `kernel/orchestrators/` | ✓ | Anchored + graded + sovereign orchestrators |
+|| `lumen/materialize/obsidian.py` | ✓ | Chronicle → Obsidian vault projection with MOC index |
+|| `lumen/materialize/cdc.py` | ✓ | CDC outbox — publishable event stream |
+|| `lumen/materialize/vector_sync.py` | ✓ | Vector store sync (Qdrant/Chroma/JSON) |
+|| `lumen/materialize/run_pipeline.py` | ✓ | CLI pipeline runner |
+|| **Live Inference** | **INTEGRATED** | GGUF model (Qwen3.5-0.8B-Q4_K_M) wired through governance membrane |
 
-All three phases are complete. The system is now fully demonstrable:
-a single command runs the orchestrated reasoning loop with live GGUF
-inference, constitutional validation, and materialization pipeline.
+### Live Inference details
+
+```
+  [LiveInference] GGUF model loaded: models/gguf/Qwen3.5-0.8B-Q4_K_M.gguf
+  [LiveInference] OracleAgent will use live LLM inference.
+
+  Chain integrity: VALID
+  Replay equivalent: PASS
+
+  FINAL BELIEF (from live/inference oracle):
+  Claim: Peer instance reports anomalous temperature spike
+  Agent: DistributedConsensus
+  Constitutional validity: VALID
+  Model: GGUF live inference
+```
+
+### Test results
+
+```
+Phase 3: Live GGUF Inference Tests
+============================================================
+
+  PASS: OracleAgent with mock llm_client produces Intent
+  PASS: OracleAgent.propose_claims returns valid GovernedClaims
+  PASS: MobileModelLLMClient has callable interface
+  PASS: GGUF model loaded (533MB)
+  PASS: Chronicle has 3 events
+  PASS: Chain integrity is VALID
+  PASS: Replay is equivalent
+  PASS: 3 Oracle events in chronicle
+  PASS: Constitutional validation: VALID for Oracle claim
+  PASS: Epistemic graph has 3 belief nodes
+  PASS: Fallback message format is correct
+
+All tests passed.
+```
