@@ -1,0 +1,3 @@
+[submodule "ai-mesh"]
+	path = ai-mesh
+	url = https://github.com/abraxis717/ai-mesh.git
