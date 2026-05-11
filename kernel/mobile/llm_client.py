@@ -139,11 +139,23 @@ class MobileModelLLMClient:
         full_prompt = f"{self._prompt_template}\n\n{prompt}"
 
         try:
-            generated = self._model.generate(
-                full_prompt,
-                max_tokens=self._max_tokens,
-                temperature=self._temperature if self._temperature is not None else self._model.temperature,
-            )
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    self._model.generate,
+                    full_prompt,
+                    max_tokens=self._max_tokens,
+                    temperature=(
+                        self._temperature
+                        if self._temperature is not None
+                        else self._model.temperature
+                    ),
+                )
+                generated = future.result(timeout=30)  # 30s per LLM call
+        except concurrent.futures.TimeoutError:
+            logger.warning("LLM generation timed out for agent %s", agent_name)
+            return []
         except Exception as exc:
             logger.error("MobileModel.generate failed: %s", exc)
             return []
@@ -151,6 +163,12 @@ class MobileModelLLMClient:
         claims = _parse_claims_from_text(generated, agent_name)
         if not claims:
             # Last resort: treat entire output as a single claim
+            clean = generated.strip()
+            if not clean:
+                # Model returned nothing — return empty list so the agent
+                # falls back to its own propose() method instead of crashing.
+                logger.warning("LLM returned empty output for agent %s", agent_name)
+                return []
             claims = [
                 GovernedClaim(
                     text=generated.strip(),

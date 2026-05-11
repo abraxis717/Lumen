@@ -15,6 +15,19 @@ Phase 3 additions:
 """
 import sys
 import os
+
+# ── Path fix: ensure 'kernel' is importable when run as a script ──
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+_parent = os.path.dirname(_this_dir)
+if _this_dir.endswith(os.path.join("kernel", "orchestrators")):
+    _grandparent = os.path.dirname(_parent)
+    if _grandparent not in sys.path:
+        sys.path.insert(0, _grandparent)
+else:
+    if _parent not in sys.path:
+        sys.path.insert(0, _parent)
+# ──────────────────────────────────────────────────────────────────
+
 import random
 import logging
 import json
@@ -24,22 +37,6 @@ from typing import Dict, List
 
 from kernel.council.claims import GovernedClaim
 from kernel.memory.memory_governor import MemoryGovernor
-
-# Allow running from any directory
-_this_dir = os.path.dirname(os.path.abspath(__file__))
-_parent = os.path.dirname(_this_dir)
-_cwd = os.getcwd()
-
-# If running from within the package root (kernel/orchestrators/),
-# the parent of orchestrators IS the package root. In that case add the
-# grandparent to sys.path so 'kernel' can be imported.
-if _this_dir.endswith(os.path.join("kernel", "orchestrators")):
-    _grandparent = os.path.dirname(_parent)
-    if _grandparent not in sys.path:
-        sys.path.insert(0, _grandparent)
-else:
-    if _parent not in sys.path:
-        sys.path.insert(0, _parent)
 
 from kernel.core.event import Intent
 
@@ -228,7 +225,7 @@ def main():
         from kernel.mobile.llm_client import MobileModelLLMClient
 
         model = MobileModel(GGUF_PATH, n_gpu_layers=-1, n_ctx=512)
-        llm_client = MobileModelLLMClient(model, max_tokens=128, temperature=0.7)
+        llm_client = MobileModelLLMClient(model, max_tokens=32, temperature=0.3)
         print(f"\n  [LiveInference] GGUF model loaded: {GGUF_PATH}")
         print(f"  [LiveInference] OracleAgent will use live LLM inference.")
     except ImportError as exc:
@@ -244,27 +241,111 @@ def main():
 
     from kernel.crypto.reality_registry import HardwareSensor
     from kernel.council.oracle_agent import OracleAgent
-    from kernel.council.math_physics_agents import EulerAgent, GaussAgent, NewtonAgent
+    from kernel.council.math_physics_agents import EulerAgent, GaussAgent, NewtonAgent, TuringAgent
     from kernel.council.mitigation_agent import MitigationAgent
     from kernel.council.lumen_agent import LumenAgent
 
-    # Wire Phase 3: pass context_fn so agents see existing epistemic context
+    # Wire Phase 3.5: pass context_fn so agents see existing epistemic context
     def _context_fn():
         return retriever.get_all_beliefs()
 
-    sensor = HardwareSensor("HW_THERM_01", world)
+    # Create a shared LLM client wrapper for agents that need it
+    # (mock_llm is used when no GGUF is available)
+    def _shared_llm(prompt: str, *, agent_name: str = "Unknown") -> List[GovernedClaim]:
+        """Shared mock LLM for Euler/Gauss/Newton/Turing when no GGUF available."""
+        if llm_client is not None:
+            return llm_client(prompt, agent_name=agent_name)
+        from kernel.council.math_physics_agents import _mock_llm
+        return _mock_llm(prompt, agent_name=agent_name)
+
+    # ── Contradictory state injection ─────────────────────────────
+    # Different agents receive different "views" of the world to
+    # force contradictions into the epistemic graph.
+    class _ContradictoryWorld:
+        """Physical world that returns divergent snapshots per agent."""
+        def __init__(self):
+            self._base = {
+                "reactor_temp_c": 180.0,
+                "pressure_bar": 12.5,
+                "coolant_flow_lps": 4.2,
+                "radiation_msv": 0.08,
+            }
+        def snapshot(self):
+            return dict(self._base)
+        def tick(self):
+            self._base["reactor_temp_c"] += random.gauss(0, 1.2)
+            self._base["pressure_bar"] += random.gauss(0, 0.04)
+        def get_view(self, agent_name: str):
+            """Return a divergent view for the given agent."""
+            view = dict(self._base)
+            rng = random.Random(hash(agent_name) & 0xFFFFFFFF)
+            if agent_name in ("Euler", "Turing"):
+                # These agents see a "healthy" system
+                view["reactor_temp_c"] = max(view["reactor_temp_c"] - 50.0, 130.0)
+                view["pressure_bar"] = min(view["pressure_bar"] - 3.0, 9.5)
+            elif agent_name in ("Gauss", "Newton"):
+                # These agents see an "anomalous" system
+                view["reactor_temp_c"] = min(view["reactor_temp_c"] + 100.0, 280.0)
+                view["pressure_bar"] = min(view["pressure_bar"] + 6.0, 18.5)
+            return view
+
+    contradictory_world = _ContradictoryWorld()
+
+    sensor = HardwareSensor("HW_THERM_01", contradictory_world)
+
+    # ── Build agents with LLM clients and per-agent state views ───
+    def _make_state_view(agent_name):
+        """Return a state dict specific to the given agent."""
+        return contradictory_world.get_view(agent_name)
+
     conductor.register(
         OracleAgent(
             sensor,
             llm_client=llm_client,
             context_fn=_context_fn,
         ),
-        EulerAgent(),
-        GaussAgent(),
-        NewtonAgent(),
+        EulerAgent(
+            model=model,
+            llm_client=_shared_llm,
+            context_fn=_context_fn,
+        ),
+        GaussAgent(
+            model=model,
+            llm_client=_shared_llm,
+            context_fn=_context_fn,
+        ),
+        NewtonAgent(
+            model=model,
+            llm_client=_shared_llm,
+            context_fn=_context_fn,
+        ),
+        TuringAgent(
+            model=model,
+            llm_client=_shared_llm,
+            context_fn=_context_fn,
+        ),
         MitigationAgent(context_fn=_context_fn),
-        LumenAgent(use_http=False),  # inline mode (no Flask service needed)
+        LumenAgent(use_http=False),
     )
+
+    # Patch conductor to use per-agent state views
+    _original_run_cycle = conductor.run_cycle
+
+    def _patched_run_cycle(c):
+        contradictory_world.tick()
+        for agent in conductor.agents:
+            result = conductor._dispatch_agent(agent, c)
+            result["agent"] = agent.name
+            conductor._log.append(result)
+            status = result.get("status", "?")
+            sym = conductor.SYM.get(status, "?")
+            reason = f"  <- {result.get('reason', '')}" if status == "BLOCKED" else ""
+            claim_info = result.get("claim_text", "")
+            if claim_info:
+                claim_info = f" [{claim_info[:40]}...]"
+            print(f"  Cycle {c+1:02d}  {sym} {agent.name:14} {status}{claim_info}{reason}")
+
+    conductor.run_cycle = _patched_run_cycle
     conductor.run_simulation(cycles=10)
 
     # -- Phase 3.2: Governed Council deliberation --
@@ -578,6 +659,36 @@ def main():
             print(f"  Model: GGUF live inference ({model.model_path})")
         else:
             print(f"  Model: MOCK fallback (llama-cpp-python not available)")
+
+    # ── Phase 3.5: Materialization ────────────────────────────────
+    # After the swarm run, generate Obsidian vault and vector sync
+    try:
+        from lumen.materialize.run_pipeline import run_pipeline
+        print(f"\n{'='*60}")
+        print(f"  MATERIALIZATION — Obsidian + Vector Sync")
+        print(f"{'='*60}\n")
+
+        # Build the pipeline args from our current state
+        pipeline_args = {
+            "graph_nodes": graph.nodes,
+            "chronicle": chronicle,
+            "graph": graph,
+            "governor": governor,
+            "strata": list(MemoryStratum),
+            "obsidian_dir": "output/obsidian",
+            "vector_store": "sqlite",
+            "vector_db": "output/vector_store.db",
+        }
+
+        results = run_pipeline(**pipeline_args)
+        print(f"\n  Materialization complete:")
+        print(f"    Obsidian vault:  {results.get('obsidian_files', 0)} files")
+        print(f"    Vector entries:  {results.get('vector_entries', 0)} entries")
+        print(f"    CDC outbox:      {results.get('cdc_events', 0)} events")
+    except ImportError:
+        print(f"\n  [Materialization] lumen.materialize not available, skipping.")
+    except Exception as exc:
+        print(f"\n  [Materialization] Error: {exc}")
     # ──────────────────────────────────────────────────────────────────
 
     print(f"{'='*60}\n")
