@@ -224,7 +224,7 @@ def main():
         from kernel.mobile.model_loader import MobileModel
         from kernel.mobile.llm_client import MobileModelLLMClient
 
-        model = MobileModel(GGUF_PATH, n_gpu_layers=-1, n_ctx=512)
+        model = MobileModel(GGUF_PATH, n_gpu_layers=0, n_ctx=512)
         llm_client = MobileModelLLMClient(model, max_tokens=32, temperature=0.3)
         print(f"\n  [LiveInference] GGUF model loaded: {GGUF_PATH}")
         print(f"  [LiveInference] OracleAgent will use live LLM inference.")

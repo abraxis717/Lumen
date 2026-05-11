@@ -138,6 +138,27 @@ def main():
     steward_registry = StewardRegistry()
     steward_registry.register(steward_key)
 
+    # ── Phase 4: Amendment DAG + Steward Tooling ───────────────────
+    from kernel.amendments.amendment_dag import AmendmentDAG, AmendmentNode
+    from kernel.tooling.steward_tooling import StewardTooling, StewardOrchestrator
+
+    amendment_dag = AmendmentDAG()
+    steward_tooling = StewardTooling(steward_key, steward_registry)
+    steward_orchestrator = StewardOrchestrator(steward_key, steward_registry)
+
+    # Seed initial amendment node (base kernel version)
+    base_node = AmendmentNode(
+        node_id="base_kernel_v0",
+        parent_ids=[],
+        version=0,
+        description="Base kernel — initial configuration",
+        author="system",
+        timestamp=time.time(),
+        steward_sig=secrets.token_hex(32),
+    )
+    amendment_dag.insert(base_node)
+    print(f"  [Phase 4] Amendment DAG initialized: {len(amendment_dag._nodes)} node(s)")
+
     # ── Deterministic core ──────────────────────────────────────────
     chronicle = Chronicle()
     gate = IngressGate(
@@ -544,6 +565,38 @@ def main():
             print(f"  [DistributedConsensus] Federation summary: {dc.summary()}")
             print(f"{'='*60}")
 
+            # ── Phase 4: Notarize checkpoint + amendment DAG report ────
+            latest_cp = chronicle.get_latest_checkpoint()
+            if latest_cp:
+                cp_event_id = latest_cp.hash
+                steward_attest = steward_orchestrator.notarize_checkpoint(cp_event_id)
+                print(f"\n  [Phase 4] Checkpoint notarized: {cp_event_id[:16]}...")
+                print(f"    Steward attestation: {steward_attest.steward_id}")
+                print(f"    Signature: {steward_attest.signature[:32]}...")
+
+                # Create amendment for this checkpoint
+                new_version = amendment_dag.get_latest_version().version + 1 if amendment_dag.get_latest_version() else 1
+                new_node = AmendmentNode(
+                    node_id=f"checkpoint_v{new_version}",
+                    parent_ids=[amendment_dag.get_latest_version().node_id] if amendment_dag.get_latest_version() else [],
+                    version=new_version,
+                    description=f"Checkpoint notarized at step {latest_cp.step}",
+                    author=steward_attest.steward_id,
+                    timestamp=steward_attest.timestamp,
+                    steward_sig=steward_attest.signature,
+                )
+                if amendment_dag.insert(new_node):
+                    print(f"  [Phase 4] Amendment DAG: version {new_version} inserted")
+                else:
+                    print(f"  [Phase 4] Amendment DAG: version {new_version} rejected (cycle detected)")
+
+            dag_stats = amendment_dag.get_dag_stats()
+            print(f"\n  [Phase 4] Amendment DAG stats:")
+            print(f"    Total nodes: {dag_stats['total_nodes']}")
+            print(f"    Applied versions: {dag_stats['applied_versions']}")
+            print(f"    Max version: {dag_stats['max_version']}")
+            print(f"    Root nodes: {len(dag_stats['root_nodes'])}")
+            print(f"    Acyclic: {amendment_dag.verify_acyclic()}")
             print(f"{'═'*72}\n")
 
     conductor = Conductor(kernel, world)

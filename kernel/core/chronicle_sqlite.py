@@ -112,6 +112,26 @@ class SQLiteChronicle:
                     (event_id,),
                 )
 
+    def notarize_checkpoint(self, event_id: str, steward_sig: str = "") -> Event:
+        """Create a notarized checkpoint event in the chronicle.
+
+        This appends a new event marking a point in the chain for
+        steward-verified reconstruction. Returns the emitted event.
+
+        Args:
+            event_id: The checkpoint event ID or hash.
+            steward_sig: Optional steward signature for the notarization.
+
+        Returns:
+            The emitted notarization Event.
+        """
+        payload = {
+            "checkpoint_event_id": event_id,
+            "steward_sig": steward_sig,
+            "action_type": "checkpoint_notarized",
+        }
+        return self.emit("CHECKPOINT_NOTARIZE", payload, agent="steward", checkpoint=True)
+
     def verify(self) -> bool:
         """Walk the chain, recompute every hash — O(n)."""
         events = self.get_chain()

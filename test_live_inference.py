@@ -210,7 +210,7 @@ def test_ggf_model_loads():
 
     try:
         from kernel.mobile.model_loader import MobileModel
-        model = MobileModel(GGUF_PATH, n_gpu_layers=-1, n_ctx=512)
+        model = MobileModel(GGUF_PATH, n_gpu_layers=0, n_ctx=512)
         print(f"  PASS: GGUF model loaded ({os.path.getsize(GGUF_PATH) / 1e6:.0f}MB)")
         model._llm.close()
     except Exception as exc:

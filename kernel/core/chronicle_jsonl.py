@@ -107,6 +107,10 @@ class Chronicle:
     def checkpoint(self, event_id: str) -> None:
         """No-op for JSONL — checkpoints are implicit."""
 
+    def notarize_checkpoint(self, event_id: str, steward_sig: str = "") -> Optional[Event]:
+        """No-op for JSONL — checkpoints are implicit. Returns None."""
+        return None
+
     def get_latest_checkpoint(self) -> Optional[Event]:
         """Return the last event as implicit checkpoint, or None."""
         if self._events:

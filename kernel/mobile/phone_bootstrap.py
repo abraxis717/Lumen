@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 # Ensure kernel is importable
-_kernel_root = Path(__file__).resolve().parent.parent.parent.parent
+_kernel_root = Path(__file__).resolve().parent.parent.parent
 if str(_kernel_root) not in sys.path:
     sys.path.insert(0, str(_kernel_root))
 
