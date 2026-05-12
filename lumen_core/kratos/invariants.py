@@ -13,3 +13,27 @@ def lexical_classifier(proposal: str) -> str:
     if "?" in p or "what" in p or "how" in p:
         return "QUERY"
     return "UNKNOWN"
+
+
+def validate_premise_coherence(proposal: str) -> str:
+    """
+    Law 6 & 10 Enforcement: Authority is separate from generation.
+    Statically checks for known contradictory patterns (Soohak Refusal Subset).
+
+    Returns:
+        "BENIGN"       — premise is coherent, safe to proceed
+        "FORBIDDEN_PREMISE" — known contradictory / ill-posed pattern
+    """
+    forbidden_patterns = [
+        "assume p and not p",
+        "divide by zero",
+        "finite set of all sets",
+        "assume both true and false",
+        "prove false equals true",
+        "assume the impossible",
+    ]
+    lower = proposal.lower()
+    for pattern in forbidden_patterns:
+        if pattern in lower:
+            return "FORBIDDEN_PREMISE"
+    return "BENIGN"

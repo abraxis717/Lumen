@@ -12,6 +12,7 @@ class Event:
     hash: str = ""
     state: str = "UNKNOWN"          # KRATOS state
     stress_count: int = 0
+    log: str = ""                    # Soohak refusal caveat log
 
     def compute_hash(self) -> str:
         payload = json.dumps({
@@ -20,6 +21,7 @@ class Event:
             "timestamp": self.timestamp,
             "prev_hash": self.prev_hash,
             "state": self.state,
-            "stress_count": self.stress_count
+            "stress_count": self.stress_count,
+            "log": self.log
         }, sort_keys=True).encode()
         return hashlib.sha256(payload).hexdigest()
