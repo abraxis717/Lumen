@@ -1,0 +1,4 @@
+# Placeholder for ai-mesh submodule
+# [submodule "ai-mesh"]
+#     path = ai-mesh
+#     url = git@github.com:abraxis717/ai-mesh.git

@@ -1,0 +1,20 @@
+pack_name: cathedral_aegis_v1
+version: 1.0
+determinism: strict
+entrypoint: lumen_core/kernel/run_system.py
+modules:
+  - kernel
+  - kratos
+  - mathos_prime
+  - governance
+  - chronicle
+  - replay
+execution_model:
+  type: deterministic_lexical_state_machine
+  loop: lexical → kratos → mathos → gate → execute → chronicle
+constraints:
+  no_stochastic: true
+  replay_required: true
+  external_governance: true
+integrity:
+  hash_type: sha256
