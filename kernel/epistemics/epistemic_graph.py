@@ -91,7 +91,7 @@ class EpistemicGraph:
         """Add a contradiction edge between two nodes."""
         if node_id_a in self.nodes and node_id_b in self.nodes:
             self.nodes[node_id_a].contradicts.append(node_id_b)
-            self.nodes[node_b].contradicts.append(node_id_a)
+            self.nodes[node_id_b].contradicts.append(node_id_a)
             self._contradictions.add((node_id_a, node_id_b))
             return True
         return False

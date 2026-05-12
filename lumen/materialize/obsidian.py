@@ -1,9 +1,11 @@
 """
 ObsidianProjector — renders a Lumen Chronicle as Obsidian-compatible markdown notes.
 
-Maps belief_created, consensus_event, oracle_telemetry, and mitication_claim events
-to individual markdown notes with YAML frontmatter, wiki-link citations, and a
-Map-of-Content (MOC) index.md grouped by stratum.
+Maps chronicle action types (belief_created, oracle_governed_claim,
+consensus_event, oracle_telemetry, compute_symbolic, optimize, simulate,
+safety_assessment, mitigation_claim, bootstrap_test, governance_drift, and
+others) to individual markdown notes with YAML frontmatter, wiki-link
+citations, and a Map-of-Content (MOC) index.md grouped by stratum.
 """
 
 from __future__ import annotations
@@ -22,9 +24,20 @@ class ObsidianProjector:
     # Action types that produce notes
     ACTION_TYPES = (
         "belief_created",
+        "oracle_governed_claim",
         "consensus_event",
         "oracle_telemetry",
-        "mitication_claim",
+        "compute_symbolic",
+        "optimize",
+        "simulate",
+        "safety_assessment",
+        "mitigation_claim",
+        "bootstrap_test",
+        "governance_drift",
+        "contradiction_detected",
+        "safety_check",
+        "SYS_LEVEL_TRANSITION",
+        "STEWARD_OVERRIDE",
     )
 
     def __init__(self, chronicle, vault_path: str) -> None:
@@ -83,9 +96,15 @@ class ObsidianProjector:
         return 0.5
 
     @staticmethod
-    def _get_agent(payload: Dict[str, Any]) -> str:
-        """Prefer source_agent, fall back to 'unknown'."""
-        return str(payload.get("source_agent", payload.get("agent", "unknown")))
+    def _get_agent(payload: Dict[str, Any], event_agent: str = "") -> str:
+        """Prefer payload source_agent, then agent from payload, then event_agent, then 'unknown'."""
+        if payload.get("source_agent"):
+            return str(payload["source_agent"])
+        if payload.get("agent"):
+            return str(payload["agent"])
+        if event_agent:
+            return str(event_agent)
+        return "unknown"
 
     @staticmethod
     def _get_citations(payload: Dict[str, Any]) -> List[str]:
@@ -167,7 +186,7 @@ class ObsidianProjector:
         payload = event.payload
         meta = {
             "event_type": event.action,
-            "agent": self._get_agent(payload),
+            "agent": self._get_agent(payload, event_agent=event.agent),
             "timestamp": self._get_timestamp(payload).isoformat(),
             "stratum": self._get_stratum(payload),
             "confidence": self._get_confidence(payload),

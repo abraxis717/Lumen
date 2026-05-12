@@ -33,7 +33,7 @@ import logging
 import json
 import time
 import uuid
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from kernel.council.claims import GovernedClaim
 from kernel.memory.memory_governor import MemoryGovernor
@@ -44,15 +44,17 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def build_system(use_sqlite: bool = False):
+def build_system(use_sqlite: bool = False, db_path: Optional[str] = None):
     """Construct the anchored system: reality channel -> gate -> kernel.
 
     Args:
         use_sqlite: If True, use SQLiteChronicle instead of JSONL Chronicle.
+        db_path:    Optional path to persist the SQLite chronicle to disk.
+                    If None, uses :memory: (ephemeral).
     """
     if use_sqlite:
         from kernel.core.chronicle_sqlite import SQLiteChronicle
-        chronicle = SQLiteChronicle()
+        chronicle = SQLiteChronicle(db_path or ":memory:")
     else:
         from kernel.core.chronicle_jsonl import Chronicle
         chronicle = Chronicle()
@@ -179,10 +181,18 @@ def main():
         action="store_true",
         help="Use SQLite Chronicle instead of JSONL Chronicle",
     )
+    parser.add_argument(
+        "--db-path",
+        default=None,
+        help="Path to persist the SQLite chronicle database (requires --sqlite)",
+    )
     args = parser.parse_args()
 
     random.seed(7)
-    kernel, world, chronicle, gate = build_system(use_sqlite=args.sqlite)
+    kernel, world, chronicle, gate = build_system(
+        use_sqlite=args.sqlite,
+        db_path=args.db_path if args.sqlite else None,
+    )
 
     # -- Epistemic Graph + Memory Governance --
     from kernel.epistemics.epistemic_graph import EpistemicGraph
@@ -241,7 +251,12 @@ def main():
 
     from kernel.crypto.reality_registry import HardwareSensor
     from kernel.council.oracle_agent import OracleAgent
-    from kernel.council.math_physics_agents import EulerAgent, GaussAgent, NewtonAgent, TuringAgent
+    # Phase 3.5: import new standalone agent files
+    from kernel.council.euler_agent import EulerAgent as EulerAgentV2
+    from kernel.council.gauss_agent import GaussAgent as GaussAgentV2
+    from kernel.council.newton_agent import NewtonAgent as NewtonAgentV2
+    from kernel.council.lumen_safety_agent import LumenSafetyAgent
+    from kernel.council.math_physics_agents import TuringAgent
     from kernel.council.mitigation_agent import MitigationAgent
     from kernel.council.lumen_agent import LumenAgent
 
@@ -293,31 +308,27 @@ def main():
 
     sensor = HardwareSensor("HW_THERM_01", contradictory_world)
 
-    # ── Build agents with LLM clients and per-agent state views ───
-    def _make_state_view(agent_name):
-        """Return a state dict specific to the given agent."""
-        return contradictory_world.get_view(agent_name)
-
+    # ── Build agents with MobileModel + StratifiedRetriever ────────
+    # Phase 3.5: Pass model AND retriever directly to Euler/Gauss/Newton/Safety
+    # These agents now accept (model, retriever) and build their own LLM prompts
+    # from the top 3 operational beliefs in the epistemic graph.
     conductor.register(
         OracleAgent(
             sensor,
             llm_client=llm_client,
             context_fn=_context_fn,
         ),
-        EulerAgent(
+        EulerAgentV2(
             model=model,
-            llm_client=_shared_llm,
-            context_fn=_context_fn,
+            retriever=retriever,
         ),
-        GaussAgent(
+        GaussAgentV2(
             model=model,
-            llm_client=_shared_llm,
-            context_fn=_context_fn,
+            retriever=retriever,
         ),
-        NewtonAgent(
+        NewtonAgentV2(
             model=model,
-            llm_client=_shared_llm,
-            context_fn=_context_fn,
+            retriever=retriever,
         ),
         TuringAgent(
             model=model,
@@ -325,6 +336,11 @@ def main():
             context_fn=_context_fn,
         ),
         MitigationAgent(context_fn=_context_fn),
+        LumenSafetyAgent(
+            model=model,
+            retriever=retriever,
+            use_http=False,
+        ),
         LumenAgent(use_http=False),
     )
 
