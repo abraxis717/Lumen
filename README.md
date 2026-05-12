@@ -1,4 +1,5 @@
 # Lumen – Institutional Cognition OS
+Contributors (X): @FractalFuryan @ArchitectWeaver @firsttogrowai @abraxisasixarba 
 
 Unified repository for **Weaver_ASI**, **Lumen**, and **ai‑mesh**.
 
