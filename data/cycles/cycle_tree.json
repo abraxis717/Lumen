@@ -1,0 +1,20 @@
+{
+  "id": "genesis",
+  "cosine_similarity": 1.0,
+  "accepted": true,
+  "children": [
+    {
+      "id": "trial-0",
+      "cosine_similarity": 0.92,
+      "accepted": true,
+      "children": [
+        {
+          "id": "trial-1",
+          "cosine_similarity": 0.92,
+          "accepted": true,
+          "children": []
+        }
+      ]
+    }
+  ]
+}
