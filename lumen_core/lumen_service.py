@@ -7,12 +7,13 @@ Pipeline (per incoming message):
   1. Elpis route(prompt) -> raw_response
   2. (Optional) AoT Sieve decomposition
   3. Semantic Gate: cosine similarity check
-  4. PTE Verifier: verify(risk_score, coherence_score, chronicle_hash)
-  5. Decision Engine: run_pipeline(raw_response) -> accept/revise/reject
-  6. Safety Filter: SafeState predicate + CBF projection
-  7. Guardian Service: evaluate()
-  8. Chronicle: chronicle_event("LIVE_INFERENCE", payload)
-  9. Return (possibly filtered) response
+  4. LogProb Bridge: token-probability consistency analysis
+  5. PTE Verifier (Sovereignty Gate): FULL/DEGRADED/FAIL_CLOSED
+  6. Decision Engine: run_pipeline(raw_response) -> accept/revise/reject
+  7. Safety Filter: SafeState predicate + CBF projection
+  8. Guardian Service: evaluate()
+  9. Chronicle: chronicle_event("LIVE_INFERENCE", payload)
+  10. Return (possibly filtered) response
 
 Error handling: any exception -> log, return safe canned message, chronicle TAMPER_DETECTED.
 """
@@ -72,6 +73,9 @@ from lumen_core.config.constants import (  # noqa: E402
     RISK_SCORE_HARD_REJECT,
 )
 
+from lumen_core.logprob_bridge import LogProbBridge, TokenLogProb  # noqa: E402
+from lumen_core.pte_verifier import PTEVerifier, PTEVerdict  # noqa: E402
+
 from kernel.constitutional.constitutional_kernel import ConstitutionalKernel  # noqa: E402
 from kernel.epistemics.epistemic_graph import EpistemicGraph  # noqa: E402
 from kernel.epistemics.belief_node import BeliefNode  # noqa: E402
@@ -95,6 +99,16 @@ _epistemic_graph = EpistemicGraph()
 # Session Governor — global trajectory monitor for live inference
 # ---------------------------------------------------------------------------
 _session_governor = SessionGovernor(H_MAL_THRESHOLD=0.5)
+
+# ---------------------------------------------------------------------------
+# LogProb Bridge — global instance for consistency analysis
+# ---------------------------------------------------------------------------
+_logprob_bridge = LogProbBridge()
+
+# ---------------------------------------------------------------------------
+# PTE Verifier — global instance for sovereignty gate
+# ---------------------------------------------------------------------------
+_pte_verifier = PTEVerifier()
 
 
 def _feed_decision_into_graph(decision: dict, prompt: str, status: str):
@@ -164,7 +178,8 @@ def guard_log_event(event_type: str, details: dict, severity: str = "INFO"):
 # Optional gate components (gracefully skip if unavailable)
 # ---------------------------------------------------------------------------
 _AOT_SIEVE_AVAILABLE = False
-_PTE_VERIFIER_AVAILABLE = False
+_LOGPROB_AVAILABLE = True  # logprob_bridge is self-contained
+_PTE_VERIFIER_AVAILABLE = True  # pte_verifier is self-contained
 
 try:
     from lumen_core.ignition import aot_sieve  # noqa: E402
@@ -172,9 +187,11 @@ try:
 except ImportError:
     pass
 
+# Old-style PTE verifier (legacy, for backward compat)
+_old_pty_verifier_available = False
 try:
-    from lumen_core.mathos_prime.verifier import PTEVerifier  # noqa: E402
-    _PTE_VERIFIER_AVAILABLE = True
+    from lumen_core.mathos_prime.verifier import PTEVerifier as _LegacyPTEVerifier  # noqa: E402
+    _old_pty_verifier_available = True
 except ImportError:
     pass
 
@@ -243,23 +260,60 @@ def _semantic_gate(raw_response: str) -> dict:
     return {"passed": passed, "cosine_similarity": cosine, "risk_score": risk}
 
 
-def _pte_verify(risk_score: float, coherence_score: float, chronicle_hash: str) -> bool:
-    """Optional PTE verifier. Returns True if verification passes (or is skipped)."""
-    if not _PTE_VERIFIER_AVAILABLE:
-        logger.debug("[PTE] Verifier not available — skipping")
-        return True
+def _pte_verify(risk_score: float, coherence_score: float, chronicle_hash: str) -> dict:
+    """PTE Verifier (Sovereignty Gate): FULL / DEGRADED / FAIL_CLOSED.
+
+    Uses the new lumen_core.pte_verifier.PTEVerifier implementation.
+    Returns a dict with keys: verdict, passed, score, details.
+    """
+    result = _pte_verifier.verify(risk_score, coherence_score, chronicle_hash)
+    logger.info(
+        "[PTE Verifier] risk=%.4f coherence=%.4f hash=%s -> %s (score=%.4f)",
+        risk_score, coherence_score, chronicle_hash[:12] if chronicle_hash else "none",
+        result["verdict"], result["score"],
+    )
+    return result
+
+
+def _logprob_check(tokens: list, prompt: str, response: str) -> dict:
+    """Check token-level logprobs for consistency violations.
+
+    Computes KL-divergence and entropy spikes.  On threshold breach,
+    emits a PHI_CONSISTENCY_SPLIT Chronicle event.
+
+    Args:
+        tokens: List of dicts with 'token_id', 'text', 'logprob', 'rank'.
+        prompt: Original prompt (truncated in chronicle).
+        response: Model response (truncated in chronicle).
+
+    Returns:
+        dict with keys: violation (bool), analysis (LogProbAnalysis|None).
+    """
+    if not _LOGPROB_AVAILABLE:
+        return {"violation": False, "analysis": None}
+
     try:
-        verifier = PTEVerifier()
-        result = verifier.verify(risk_score, coherence_score, chronicle_hash)
-        if isinstance(result, dict):
-            ok = result.get("passed", True)
-        else:
-            ok = bool(result)
-        logger.info("[PTE Verifier] hash=%s passed=%s", chronicle_hash, ok)
-        return ok
+        logprob_tokens = [
+            TokenLogProb(
+                token_id=t.get("token_id", i),
+                token_text=t.get("text", ""),
+                logprob=t.get("logprob", 0.0),
+                rank=t.get("rank", 0),
+            )
+            for i, t in enumerate(tokens)
+        ]
+        analysis = _logprob_bridge.analyze(logprob_tokens)
+
+        if analysis.consistency_violation:
+            _logprob_bridge.emit_violation_event(analysis, prompt=prompt, response=response)
+
+        return {
+            "violation": analysis.consistency_violation,
+            "analysis": analysis,
+        }
     except Exception as exc:
-        logger.warning("[PTE Verifier] verification failed: %s", exc)
-        return False
+        logger.warning("[LogProbBridge] Analysis failed: %s", exc)
+        return {"violation": False, "analysis": None}
 
 
 def _safe_state_filter(response: str, safety_filter: Optional[TextSafetyFilter] = None) -> tuple:
@@ -313,7 +367,7 @@ def _guardian_guard(response: str, signal: dict, session_id: str = "default") ->
 # Main chat handler
 # ---------------------------------------------------------------------------
 
-def handle_chat(message: str) -> dict:
+def handle_chat(message: str, session_id: str = "default") -> dict:
     """Full inference pipeline through Elpis + L3 safety gates.
 
     Returns:
@@ -379,21 +433,33 @@ def handle_chat(message: str) -> dict:
                 "gates": gates,
             }
 
-        # --- Step 3: PTE Verifier ---
+        # --- Step 3: LogProb Check (consistency analysis) ---
+        logprob_result = _logprob_check([], message, raw_response)
+        gates["logprob"] = logprob_result
+        if logprob_result.get("violation"):
+            logger.warning("[LogProbBridge] Consistency violation detected")
+            chronicle_event("PHI_CONSISTENCY_SPLIT", {
+                "prompt": message[:200],
+                "analysis": str(logprob_result.get("analysis", {})),
+            })
+
+        # --- Step 4: PTE Verifier (Sovereignty Gate) ---
         coherence_streak = 0
         try:
             coherence_streak = _elpis.coherence.get_streak()
         except Exception:
             pass
-        pte_ok = _pte_verify(
+        pte_result = _pte_verify(
             sem["risk_score"],
             float(coherence_streak) / 1000.0,
             chronicle_hash,
         )
-        gates["pte"] = {"passed": pte_ok}
+        pte_ok = pte_result.get("passed", True)
+        gates["pte"] = pte_result
         if not pte_ok:
-            logger.warning("[PTE Verifier] FAILED")
+            logger.warning("[PTE Verifier] FAILED: %s", pte_result.get("verdict"))
             chronicle_event("PTE_REJECTED", {
+                "verdict": pte_result.get("verdict"),
                 "risk_score": sem["risk_score"],
                 "coherence": coherence_streak,
                 "prompt": message[:200],
@@ -404,7 +470,7 @@ def handle_chat(message: str) -> dict:
                 "gates": gates,
             }
 
-        # --- Step 4: Decision Engine ---
+        # --- Step 5: Decision Engine ---
         decision = DecisionEngine().run_pipeline(raw_response)
         gates["decision"] = decision
         decision_action = "accept"
@@ -413,7 +479,7 @@ def handle_chat(message: str) -> dict:
         elif decision.get("risk_score", 0) > 0.5:
             decision_action = "revise"
 
-        # --- Step 5: Safety Filter (TextSafetyFilter + CBF) ---
+        # --- Step 6: Safety Filter (TextSafetyFilter + CBF) ---
         filtered_response, safety_verdict = _safe_state_filter(
             raw_response, _safety_filter()
         )
@@ -447,7 +513,7 @@ def handle_chat(message: str) -> dict:
             "risk_score": decision.get("risk_score", 0),
             "hash": decision.get("hash", "unknown"),
         }
-        session_id = data.get("session_id", "default")
+        session_id = session_id  # already a parameter of handle_chat()
         allowed, guardian_reason = _guardian_guard(filtered_response, guardian_signal, session_id)
         gates["guardian"] = {"allowed": allowed, "reason": guardian_reason}
         if not allowed:
@@ -547,6 +613,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             body = self.rfile.read(length) if length else b"{}"
             data = json.loads(body)
             message = data.get("message", "")
+            session_id = data.get("session_id", "default")
         except (json.JSONDecodeError, ValueError) as exc:
             self._send_json(400, {"error": f"invalid JSON: {exc}"})
             return
@@ -555,8 +622,8 @@ class ChatHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "message is required"})
             return
 
-        logger.info("[HTTP] /chat received: %s", message[:100])
-        result = handle_chat(message)
+        logger.info("[HTTP] /chat received: %s session=%s", message[:100], session_id)
+        result = handle_chat(message, session_id=session_id)
         self._send_json(200, result)
 
     def _send_json(self, status: int, obj: dict):

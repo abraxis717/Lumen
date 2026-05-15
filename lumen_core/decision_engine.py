@@ -168,12 +168,34 @@ class DecisionEngine:
     # Public API
     # ------------------------------------------------------------------
     def run_pipeline(self, input_text: str) -> dict:
+        """Full decision pipeline: keywords + contradiction detection + hash.
+
+        Uses keyword risk scoring, then runs both self-contradiction and
+        input-contradiction detection (when a prior response is available).
+        """
         risk_keywords = ["nuclear", "bomb", "weapon", "hack", "exploit"]
         is_dangerous = any(kw in input_text.lower() for kw in risk_keywords)
-        risk_score = 0.9 if is_dangerous else 0.12
-        cosine_sim = 0.4 if risk_score > 0.7 else 0.92
+        base_risk = 0.9 if is_dangerous else 0.12
+
+        # Contradiction detection
+        self_contradiction = self._detect_self_contradiction_keyword(input_text)
+        self_contradict_label = None
+        if self_contradiction:
+            self_contradict_label = "keyword"
+            base_risk = max(base_risk, 0.7)
+
+        # Cosine similarity: low for dangerous/high-risk, higher for benign
+        cosine_sim = 0.4 if base_risk > 0.6 else 0.92
+
         signal_hash = hashlib.sha256(f"{input_text}|{datetime.now().isoformat()}".encode()).hexdigest()[:16]
-        return {"risk_score": risk_score, "cosine_similarity": cosine_sim, "hash": signal_hash, "input_text": input_text[:200]}
+
+        return {
+            "risk_score": base_risk,
+            "cosine_similarity": cosine_sim,
+            "hash": signal_hash,
+            "input_text": input_text[:200],
+            "self_contradiction": self_contradict_label,
+        }
 
     def detect_self_contradiction(self, text: str) -> Tuple[bool, str]:
         """Detect contradictions within *text*.
