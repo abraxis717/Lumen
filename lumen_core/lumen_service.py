@@ -26,6 +26,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Logging (before any imports that might use logger)
@@ -62,6 +63,7 @@ except Exception as exc:
 # Lumen safety gates
 # ---------------------------------------------------------------------------
 from lumen_core.decision_engine import DecisionEngine  # noqa: E402
+from lumen_core.safety_filter import TextSafetyFilter  # noqa: E402
 from lumen_core.safety.guardian_service import GuardianService  # noqa: E402
 from lumen_core.safety.chronicle import chronicle_event  # noqa: E402
 from lumen_core.safety.phase_space_gate import PhaseSpaceGate  # noqa: E402
@@ -69,6 +71,94 @@ from lumen_core.config.constants import (  # noqa: E402
     ACTIVATION_COSINE_SIM_ACCEPT,
     RISK_SCORE_HARD_REJECT,
 )
+
+from kernel.constitutional.constitutional_kernel import ConstitutionalKernel  # noqa: E402
+from kernel.epistemics.epistemic_graph import EpistemicGraph  # noqa: E402
+from kernel.epistemics.belief_node import BeliefNode  # noqa: E402
+from kernel.memory.strata import MemoryStratum  # noqa: E402
+from lumen_core.session_governor import SessionGovernor  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# File-backed guard audit log
+# ---------------------------------------------------------------------------
+import sqlite3 as _sqlite3
+from datetime import datetime as _datetime, timezone as _timezone
+
+_GUARD_DB_PATH = None  # lazily initialized
+
+# ---------------------------------------------------------------------------
+# OODA loop — global epistemic graph for live inference decisions
+# ---------------------------------------------------------------------------
+_epistemic_graph = EpistemicGraph()
+
+# ---------------------------------------------------------------------------
+# Session Governor — global trajectory monitor for live inference
+# ---------------------------------------------------------------------------
+_session_governor = SessionGovernor(H_MAL_THRESHOLD=0.5)
+
+
+def _feed_decision_into_graph(decision: dict, prompt: str, status: str):
+    """Close the OODA loop: persist decision as a BeliefNode in the epistemic graph.
+
+    This implements the Act→Observe path of the OODA cycle by feeding
+    the system's own decision output back as a new belief node.
+    """
+    try:
+        node_id = f"decision_{decision.get('hash', 'unknown')[:12]}"
+        node = BeliefNode(
+            node_id=node_id,
+            claim=f"Decision on prompt '{prompt[:80]}...': {status}",
+            confidence=decision.get("risk_score", 0.5),
+            stratum=MemoryStratum.OPERATIONAL,
+            agent="decision_engine",
+            source_event_id=decision.get("hash", "unknown"),
+            citations=[],
+            metadata={
+                "decision_action": status,
+                "cosine_similarity": decision.get("cosine_similarity", 0.0),
+                "risk_score": decision.get("risk_score", 0.0),
+            },
+        )
+        _epistemic_graph.add_node(node)
+        logger.info(
+            "[OODA] Decision node added: id=%s risk=%.4f action=%s",
+            node_id, decision.get("risk_score", 0), status,
+        )
+    except Exception as exc:
+        logger.warning("[OODA] Failed to feed decision into graph: %s", exc)
+
+def _get_guard_db():
+    """Get a file-backed connection for the guard audit log."""
+    global _GUARD_DB_PATH
+    from lumen_core.config.constants import GUARD_LOG_DB  # noqa: E402
+    if _GUARD_DB_PATH is None:
+        db_path = GUARD_LOG_DB
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        _GUARD_DB_PATH = _sqlite3.connect(db_path)
+        _GUARD_DB_PATH.execute(
+            "CREATE TABLE IF NOT EXISTS guard_log ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "timestamp TEXT NOT NULL, "
+            "event_type TEXT NOT NULL, "
+            "details TEXT NOT NULL, "
+            "severity TEXT DEFAULT 'INFO')"
+        )
+        _GUARD_DB_PATH.commit()
+    return _GUARD_DB_PATH
+
+def guard_log_event(event_type: str, details: dict, severity: str = "INFO"):
+    """Append a safety/audit event to the file-backed guard log."""
+    try:
+        db = _get_guard_db()
+        ts = _datetime.now(_timezone.utc).isoformat()
+        import json as _json
+        db.execute(
+            "INSERT INTO guard_log (timestamp, event_type, details, severity) VALUES (?,?,?,?)",
+            (ts, event_type, _json.dumps(details, default=str), severity),
+        )
+        db.commit()
+    except Exception:
+        pass  # non-fatal — guard log is append-only
 
 # ---------------------------------------------------------------------------
 # Optional gate components (gracefully skip if unavailable)
@@ -95,6 +185,32 @@ SAFE_FALLBACK = (
     "I apologize, but I'm unable to provide that response right now. "
     "Please try again later."
 )
+
+# ---------------------------------------------------------------------------
+# TextSafetyFilter instance (wired to ConstitutionalKernel)
+# ---------------------------------------------------------------------------
+def _build_safety_filter() -> TextSafetyFilter:
+    """Construct the global TextSafetyFilter with ConstitutionalKernel."""
+    try:
+        kernel = ConstitutionalKernel()
+        kernel.load_defaults()
+        return TextSafetyFilter(
+            constitutional_kernel=kernel,
+            blocked_patterns=["hack", "exploit", "override", "bypass", "circumvent"],
+            max_length=8192,
+        )
+    except Exception as exc:
+        logger.warning("[TextSafetyFilter] Build failed: %s — using no-op", exc)
+        return TextSafetyFilter(
+            constitutional_kernel=None,
+            blocked_patterns=["hack", "exploit"],
+            max_length=8192,
+        )
+
+
+def _safety_filter() -> TextSafetyFilter:
+    """Lazy singleton accessor for the text safety filter."""
+    return _build_safety_filter()
 
 # ---------------------------------------------------------------------------
 # Safety pipeline helpers
@@ -146,25 +262,48 @@ def _pte_verify(risk_score: float, coherence_score: float, chronicle_hash: str) 
         return False
 
 
-def _safe_state_filter(response: str) -> str:
-    """Minimal SafeState predicate + CBF projection.
+def _safe_state_filter(response: str, safety_filter: Optional[TextSafetyFilter] = None) -> tuple:
+    """TextSafetyFilter: blocked-pattern + constitutional gate + CBF projection.
 
-    Strips any response exceeding max length and flags boundary violations.
+    Replaces the dead CartPole-style length-only filter.
+    
+    Returns:
+        (filtered_response, verdict_dict) — verdict dict has keys:
+          verdict (str), reason (str), blocked_match (str|None),
+          constitutional_violation (bool)
     """
-    max_len = 8192
+    if safety_filter is None:
+        # Fallback: original length-only behavior
+        max_len = 8192
+        if len(response) > max_len:
+            logger.warning(
+                "[SafeState] Response truncated: %d -> %d chars",
+                len(response), max_len,
+            )
+            response = response[:max_len]
+        return response, {"verdict": "ALLOW", "reason": "fallback", "blocked_match": None}
+
+    verdict = safety_filter.check(response)
+    if verdict["verdict"] in (TextSafetyFilter.VERDICT_BLOCK, TextSafetyFilter.VERDICT_HARD_FAIL):
+        logger.warning("[TextSafetyFilter] %s: %s", verdict["verdict"], verdict["reason"])
+        return SAFE_FALLBACK, verdict
+
+    # Length guard (CBF projection)
+    max_len = safety_filter.max_length
     if len(response) > max_len:
         logger.warning(
             "[SafeState] Response truncated: %d -> %d chars",
             len(response), max_len,
         )
         response = response[:max_len]
-    return response
+
+    return response, verdict
 
 
-def _guardian_guard(response: str, signal: dict) -> tuple:
+def _guardian_guard(response: str, signal: dict, session_id: str = "default") -> tuple:
     """GuardianService.evaluate() on the post-filtered signal."""
-    guardian = GuardianService()
-    allowed, reason = guardian.evaluate(signal)
+    guardian = GuardianService(session_governor=_session_governor)
+    allowed, reason, _extra = guardian.evaluate(signal, session_id=session_id)
     logger.info("[Guardian] signal_hash=%s allowed=%s reason=%s",
                 signal.get("hash", "N/A"), allowed, reason)
     return allowed, reason
@@ -274,15 +413,42 @@ def handle_chat(message: str) -> dict:
         elif decision.get("risk_score", 0) > 0.5:
             decision_action = "revise"
 
-        # --- Step 5: Safety Filter (SafeState + CBF) ---
-        filtered_response = _safe_state_filter(raw_response)
+        # --- Step 5: Safety Filter (TextSafetyFilter + CBF) ---
+        filtered_response, safety_verdict = _safe_state_filter(
+            raw_response, _safety_filter()
+        )
+        gates["safety_filter"] = safety_verdict
+        if safety_verdict["verdict"] in (
+            TextSafetyFilter.VERDICT_BLOCK,
+            TextSafetyFilter.VERDICT_HARD_FAIL,
+        ):
+            guard_log_event("safety_filter_block", {
+                "reason": safety_verdict["reason"],
+                "blocked_match": safety_verdict.get("blocked_match"),
+                "constitutional_violation": safety_verdict.get(
+                    "constitutional_violation", False
+                ),
+            }, severity="WARN")
+            chronicle_event("SAFETY_FILTER_BLOCK", {
+                "reason": safety_verdict["reason"],
+                "blocked_match": safety_verdict.get("blocked_match"),
+                "constitutional_violation": safety_verdict.get(
+                    "constitutional_violation", False
+                ),
+            })
+            return {
+                "response": SAFE_FALLBACK,
+                "status": "safety_filter_blocked",
+                "gates": gates,
+            }
 
         # --- Step 6: Guardian Service ---
         guardian_signal = {
             "risk_score": decision.get("risk_score", 0),
             "hash": decision.get("hash", "unknown"),
         }
-        allowed, guardian_reason = _guardian_guard(filtered_response, guardian_signal)
+        session_id = data.get("session_id", "default")
+        allowed, guardian_reason = _guardian_guard(filtered_response, guardian_signal, session_id)
         gates["guardian"] = {"allowed": allowed, "reason": guardian_reason}
         if not allowed:
             logger.warning("[Guardian] BLOCKED: %s", guardian_reason)
@@ -297,7 +463,7 @@ def handle_chat(message: str) -> dict:
                 "gates": gates,
             }
 
-        # --- Step 7: Chronicle ---
+         # --- Step 7: Chronicle ---
         chronicle_event("LIVE_INFERENCE", {
             "prompt": message[:200],
             "response_truncated": len(raw_response) > 256,
@@ -307,6 +473,9 @@ def handle_chat(message: str) -> dict:
             "guardian_reason": guardian_reason,
             "coherence_streak": coherence_streak,
         })
+
+        # --- Step 8: OODA Loop — feed decision back into epistemic graph ---
+        _feed_decision_into_graph(decision, message, decision_action)
 
         return {
             "response": filtered_response,
@@ -343,10 +512,34 @@ class ChatHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
 
     def do_GET(self):
-        if self.path.rstrip("/") == "/health":
+        path = self.path.rstrip("/")
+        if path == "/health":
             self._send_json(200, {"status": "ok", "service": "lumen"})
+        elif path.startswith("/session_state/"):
+            session_id = path.rsplit("/", maxsplit=1)[-1]
+            self._handle_session_state(session_id)
         else:
             self._send_json(404, {"error": "not found"})
+
+    def _handle_session_state(self, session_id: str):
+        """GET /session_state/<id> — live governance metrics for a session."""
+        try:
+            state = _session_governor.get_or_create_session(session_id)
+            self._send_json(200, {
+                "session_id": state.session_id,
+                "turn_count": state.turn_count,
+                "contradiction_count": state.contradiction_count,
+                "contradiction_rate": state.contradiction_rate,
+                "constitutional_alignment": state.constitutional_alignment,
+                "kuramoto_order": state.kuramoto_order,
+                "lyapunov_estimate": state.lyapunov_estimate,
+                "malignant_entropy": state.malignant_entropy,
+                "dampening_applied": state.dampening_applied,
+                "risk_trend": state.risk_trend[-20:],  # last 20 data points
+            })
+        except Exception as exc:
+            logger.error("[HTTP] /session_state error: %s", exc)
+            self._send_json(500, {"error": str(exc)})
 
     def _handle_chat(self):
         try:

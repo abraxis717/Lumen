@@ -22,7 +22,7 @@ def run_ignition(trials=3):
         print(f"\n[Ignition] Trial {i+1} | Prompt: {prompt}")
         signal = engine.run_pipeline(prompt)
         print(f"  Risk: {signal['risk_score']:.2f}")
-        safe, reason = guardian.evaluate(signal)
+        safe, reason, _extra = guardian.evaluate(signal)
         if not safe:
             chronicle_event("LIVE_INFERENCE_BLOCKED", {"trial": i, "prompt": prompt, "reason": reason})
             print(f"  BLOCKED: {reason}")

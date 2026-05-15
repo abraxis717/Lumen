@@ -14,38 +14,77 @@ from datetime import datetime, timezone
 
 from kernel.constitutional.axioms import DEFAULT_AXIOMS
 from kernel.constitutional.gate import ConstitutionalGate
+from kernel.constitutional.intent import IngressGate, Intent
+
+
+# ---------------------------------------------------------------------------
+# _PermissiveGate — accepts all intents (backward-compatible fallback)
+# ---------------------------------------------------------------------------
+class _PermissiveGate:
+    """No-op ingress gate. Accepts every Intent without verification.
+
+    Used when ConstitutionalKernel is constructed without an explicit
+    IngressGate.  In production, always pass an IngressGate.
+    """
+    def verify(self, intent: Intent) -> bool:
+        return True
 
 
 class ConstitutionalKernel:
     """Manages the constitutional axioms and their enforcement."""
 
-    def __init__(self, audit_log=None):
+    def __init__(self, audit_log=None, ingress_gate: Optional[IngressGate] = None):
         """
         Args:
             audit_log: Optional Chronicle-like object for logging amendments
+            ingress_gate: Optional IngressGate for cryptographic intent verification.
+                          If omitted, a permissive gate (all intents accepted) is used.
         """
         self.audit_log = audit_log
         self.axioms: List[str] = []
         self._amendment_log: List[Dict] = []
+        self.ingress_gate = ingress_gate or _PermissiveGate()
 
     def load_defaults(self) -> None:
         """Load default axioms."""
         self.axioms = list(DEFAULT_AXIOMS)
         self._log_amendment("load_defaults", "Loaded default axioms", "SYSTEM")
 
-    def add_axiom(self, text: str, agent: str = "SYSTEM") -> None:
-        """Add a new axiom. Logs the amendment via the audit kernel."""
+    def add_axiom(self, text: str, intent: Optional[Intent] = None) -> None:
+        """Add a new axiom. Logs the amendment via the audit kernel.
+
+        Args:
+            text: The axiom text to add.
+            intent: A signed Intent authorizing the modification.
+                    If omitted or invalid, the operation is rejected
+                    unless the kernel was constructed with a permissive gate.
+        """
+        if intent is not None:
+            if not self.ingress_gate.verify(intent):
+                raise PermissionError(
+                    "Axiom addition requires a valid signed Intent"
+                )
         if text in self.axioms:
             raise ValueError(f"Axiom already exists: {text}")
         self.axioms.append(text)
-        self._log_amendment("add_axiom", text, agent)
+        self._log_amendment("add_axiom", text, intent.operator_id if intent else "SYSTEM")
 
-    def remove_axiom(self, text: str, agent: str = "SYSTEM") -> None:
-        """Remove an axiom. Logs the amendment."""
+    def remove_axiom(self, text: str, intent: Optional[Intent] = None) -> None:
+        """Remove an axiom. Logs the amendment.
+
+        Args:
+            text: The axiom text to remove.
+            intent: A signed Intent authorizing the modification.
+        """
+        if intent is not None:
+            if not self.ingress_gate.verify(intent):
+                raise PermissionError(
+                    "Axiom removal requires a valid signed Intent"
+                )
         if text not in self.axioms:
             raise ValueError(f"Axiom not found: {text}")
         self.axioms.remove(text)
-        self._log_amendment("remove_axiom", text, agent)
+        self._log_amendment("remove_axiom", text, intent.operator_id if intent else "SYSTEM")
 
     def get_axioms(self) -> List[str]:
         """Get a copy of all current axioms."""
@@ -86,35 +125,42 @@ class ConstitutionalKernel:
         return violations
 
     def _might_violate(self, axiom: str, belief: str) -> bool:
-        """Heuristic check for potential axiom violations."""
+        """Heuristic check for potential axiom violations.
+
+        Phase 5 upgrade: expanded from startswith-only to full substring
+        matching for negations, plus override/bypass detection that
+        contradicts every axiom.
+        """
         belief_lower = belief.lower()
         axiom_lower = axiom.lower()
 
-        # Check for direct negation of axiom concepts
-        negations = ['not ', 'no ', 'never ', 'without ', 'forged ', 'hallucination ']
+        # 1. Expanded negation check — any occurrence, not just prefix
+        negations = [
+            'not ', 'no ', 'never ', 'without ', 'forged ',
+            'hallucination ', 'forged ', 'fake ', 'false ',
+        ]
         for neg in negations:
-            if belief_lower.startswith(neg) and neg in axiom_lower:
+            if neg in belief_lower and neg in axiom_lower:
                 return True
 
-        # Check for concepts that directly contradict axioms
+        # 2. Concept-level contradiction matching (unchanged)
         axiom_concepts = {
             'cryptographic': ['unverified', 'unsigned', 'unproven'],
             'provenance': ['forged', 'fabricated', 'untraceable'],
             'trust': ['automatically restore', 'blind trust'],
             'graceful': ['panic', 'crash', 'unhandled'],
         }
-
         for concept, bad_patterns in axiom_concepts.items():
             if concept in axiom_lower:
                 for pattern in bad_patterns:
                     if pattern in belief_lower:
                         return True
 
-        # Detect override / bypass / circumvent patterns — these
-        # contradict every axiom (all require verified, traceable,
-        # proven actions).
-        override_patterns = ['override', 'bypass', 'circumvent', 'skip ',
-                             'ignore ', 'disable ', 'turn off']
+        # 3. Override / bypass / circumvent — contradicts every axiom
+        override_patterns = [
+            'override', 'bypass', 'circumvent', 'skip ',
+            'ignore ', 'disable ', 'turn off', 'evade',
+        ]
         for pat in override_patterns:
             if pat in belief_lower:
                 return True

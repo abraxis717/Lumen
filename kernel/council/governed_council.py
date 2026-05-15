@@ -140,7 +140,7 @@ class GovernedCouncil:
         for a, b in combinations(batch_nodes, 2):
             if self._are_contradictory(a, b):
                 contradictions_found += 1
-                ArbitrationEngine.resolve(a, b)
+                ArbitrationEngine.resolve_and_reclassify(a, b)
 
         # Also check claims against existing real-graph knowledge
         for i, claim in enumerate(all_claims):
@@ -151,7 +151,7 @@ class GovernedCouncil:
                 ):
                     continue
                 if self._are_contradictory(node, existing):
-                    ArbitrationEngine.resolve(node, existing)
+                    ArbitrationEngine.resolve_and_reclassify(node, existing)
                     contradictions_found += 1
                     break
 

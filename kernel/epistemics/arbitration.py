@@ -69,6 +69,22 @@ class ArbitrationEngine:
         return base_weight
 
     @classmethod
+    def resolve_and_reclassify(cls, node_a: BeliefNode, node_b: BeliefNode) -> Tuple[str, str]:
+        """Resolve a contradiction between two nodes AND reclassify the loser.
+
+        This is the preferred method for actual arbitration — it performs
+        both the resolution and the reclassification in a single call,
+        ensuring the loser is properly marked as DISPUTED in the graph.
+
+        Returns:
+            (winner_id, loser_id): The node that survives, the one that gets reclassified
+        """
+        winner_id, loser_id = cls.resolve(node_a, node_b)
+        loser = node_a if loser_id == node_a.node_id else node_b
+        cls.reclassify_losing_node(loser)
+        return winner_id, loser_id
+
+    @classmethod
     def reclassify_losing_node(cls, node: BeliefNode) -> BeliefNode:
         """Reclassify the losing node to DISPUTED stratum."""
         return node._replace(stratum=MemoryStratum.DISPUTED)
