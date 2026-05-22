@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# pre-commit hook: reject files containing stray control characters
+# Stray control characters (0x00-0x1F except 0x09=tab, 0x0A=newline, 0x0D=CR)
+# indicate AI-generated corruption (commonly 0x7F DELETE).
+#
+# Usage: install with `chmod +x .git/hooks/pre-commit`
+
+set -euo pipefail
+
+# Get list of staged files (excluding deleted ones)
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+if [ -z "$STAGED_FILES" ]; then
+    exit 0
+fi
+
+ERRORS=0
+for file in $STAGED_FILES; do
+    # Skip binary files
+    if file "$file" | grep -q "binary"; then
+        continue
+    fi
+
+    # Check for control characters (excluding tab, newline, CR)
+    if LC_ALL=C grep -Pc '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]' "$file" > /dev/null 2>&1; then
+        LINE=$(LC_ALL=C grep -Pn '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]' "$file" | head -1)
+        echo "ERROR: Stray control character(s) found in staged file: $file"
+        echo "  $LINE"
+        echo "  AI-generated commits may introduce control characters. Review the diff."
+        ERRORS=1
+    fi
+done
+
+if [ $ERRORS -ne 0 ]; then
+    echo ""
+    echo "Commit rejected due to stray control characters."
+    echo "Fix the files or use --no-verify to bypass."
+    exit 1
+fi
+
+exit 0
