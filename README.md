@@ -172,12 +172,13 @@ Discovers, validates, and compiles AI component plugins into launch scripts.
 - `numpy`, `scipy`, `flask` (core dependencies -- no GPU or transformers required)
 - Optional: llama.cpp server at `http://localhost:8080` for live inference
 
-### 1. Clone and initialize submodules
+### 1. Clone and initialize
 
 ```bash
 git clone https://github.com/abraxis717/Lumen.git
 cd Lumen
 git submodule update --init --recursive
+git config core.hooksPath .githooks
 ```
 
 ### 2. Install dependencies
