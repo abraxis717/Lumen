@@ -1,0 +1,56 @@
+# .gitattributes - Lumen repository
+# Prevents binary corruption and enforces line-ending consistency.
+
+# Text files: normalize line endings to LF for consistent diffing
+*.py text diff=python
+*.md text
+*.txt text
+*.yaml text
+*.yml text
+*.json text
+*.sh text
+*.css text
+*.html text
+
+# Submodule pointers (gitlink objects)
+.gitmodules text
+.gitattributes text
+
+# AI-mesh submodule: mark as gitlink (no content tracking in parent)
+ai-mesh -diff
+
+# Binary assets: treat as binary, no line-ending conversion
+*.bin binary
+*.dll binary
+*.exe binary
+*.o binary
+*.so binary
+*.a binary
+*.dylib binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.xz binary
+*.bz2 binary
+*.7z binary
+*.rar binary
+*.jar binary
+*.class binary
+*.egg binary
+*.whl binary
+*.npy binary
+*.npz binary
+*.pt binary
+*.pth binary
+*.model binary
+*.ckpt binary
+*.h5 binary
+*.pkl binary
+*.pickle binary
+*.safetensors binary
+*.gguf binary
+*.bin binary
+
+# Prevent encoding issues on large files
+*.csv text eol=lf
+*.tsv text eol=lf
