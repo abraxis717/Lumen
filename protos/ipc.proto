@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package elpis.telemetry;
+
+option go_package = "lumen/protos";
+
+// ── Message Types ────────────────────────────────────────────────
+
+message EvaluationMetric {
+  uint64 step = 1;
+  float epoch = 2;
+  float exact_match_accuracy = 3;
+  float loss = 4;
+}
+
+// ── Service Definitions ──────────────────────────────────────────
+
+service Telemetry {
+  // Stream evaluation metrics in real-time during training.
+  rpc StreamMetrics (stream EvaluationMetric) returns (stream EvaluationMetric);
+}
