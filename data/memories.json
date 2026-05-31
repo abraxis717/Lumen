@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "schema": "Lumen persistent memory store — Co-Architect update",
+  "memories": [
+    {
+      "id": "m001",
+      "key": "lumen_render_pipeline",
+      "category": "architecture",
+      "content": "Lumen uses a Vulkan-backed WebGPU rendering pipeline with compute shaders for AI inference. The render loop is event-driven, not frame-rate capped.",
+      "tags": ["rendering", "vulkan", "webgpu", "pipeline"],
+      "created": "2025-10-01T00:00:00Z",
+      "updated": "2026-01-10T00:00:00Z",
+      "weight": 1.0
+    },
+    {
+      "id": "m002",
+      "key": "aurora_multi_intent",
+      "category": "intent_routing",
+      "content": "AURORA-AXIS routing uses forward-only intent classification with bounded risk evaluation. Four interpretation classes: statistical_analysis, trend_forecasting, anomaly_detection, root_cause_analysis.",
+      "tags": ["aurora", "intent", "routing", "classification"],
+      "created": "2025-11-15T00:00:00Z",
+      "updated": "2026-01-15T00:00:00Z",
+      "weight": 0.95
+    },
+    {
+      "id": "m003",
+      "key": "agent_booster_integration",
+      "category": "integration",
+      "content": "Agent Booster: Lumen integrates with external agent frameworks via a standardized agent protocol. Agents can request rendering, computation, and data access through the harness.",
+      "tags": ["agent", "booster", "integration", "protocol"],
+      "created": "2025-12-01T00:00:00Z",
+      "updated": "2026-01-15T00:00:00Z",
+      "weight": 0.9
+    },
+    {
+      "id": "m004",
+      "key": "harness_evaluation_framework",
+      "category": "evaluation",
+      "content": "AURORA-AXIS Evaluation Harness provides synthetic benchmarking with four baselines (SinglePassLLM, ClarificationAgent, NaivePlannerExecutor, AuroraAxis). Supports drift recovery testing and Phase 2 human evaluation export.",
+      "tags": ["harness", "evaluation", "benchmarking", "testing"],
+      "created": "2026-01-01T00:00:00Z",
+      "updated": "2026-01-15T00:00:00Z",
+      "weight": 0.85
+    }
+  ],
+  "metadata": {
+    "total_memories": 4,
+    "last_updated": "2026-01-15T00:00:00Z",
+    "storage_path": "data/memories.json"
+  }
+}

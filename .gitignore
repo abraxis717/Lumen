@@ -1,14 +1,41 @@
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.log
-*.db
-*.sqlite3
-*.json.gz
-compiler-output/
-*.error
-*.report
-node_modules/
-.env
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+
+# Rust
+/target/
+Cargo.lock
+
+# PDFs and binary files (keep originals, ignore extracted copies if needed)
+*.pdf
+*.zip
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Data output (generated at runtime)
+data/memories.json.bak
+phase2_export.json
+eval_results_*.json
+
+# Local config (if any)
+*.local
+
+# Update directory (source of truth, but not committed)
+# Note: update/ is tracked if it's part of the release

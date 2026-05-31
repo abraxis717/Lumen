@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "schema": "Lumen user registry — Co-Architect update",
+  "users": [
+    {
+      "id": "u001",
+      "handle": "co-architect-alpha",
+      "role": "architect",
+      "permissions": ["read", "write", "deploy"],
+      "active": true,
+      "registered": "2025-11-01T00:00:00Z"
+    },
+    {
+      "id": "u002",
+      "handle": "co-architect-beta",
+      "role": "architect",
+      "permissions": ["read", "write", "deploy"],
+      "active": true,
+      "registered": "2025-11-01T00:00:00Z"
+    },
+    {
+      "id": "u003",
+      "handle": "lumen-admin",
+      "role": "admin",
+      "permissions": ["read", "write", "deploy", "admin"],
+      "active": true,
+      "registered": "2025-01-01T00:00:00Z"
+    },
+    {
+      "id": "u004",
+      "handle": "evaluator",
+      "role": "evaluator",
+      "permissions": ["read"],
+      "active": true,
+      "registered": "2025-12-01T00:00:00Z"
+    },
+    {
+      "id": "u005",
+      "handle": "aurora-service",
+      "role": "service",
+      "permissions": ["read", "write"],
+      "active": true,
+      "registered": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "metadata": {
+    "total_users": 5,
+    "active_users": 5,
+    "last_updated": "2026-01-15T00:00:00Z"
+  }
+}
