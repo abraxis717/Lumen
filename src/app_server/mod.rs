@@ -37,7 +37,7 @@ pub struct AppServerDaemon {
 }
 
 #[derive(Debug)]
-enum InternalRequest {
+pub(crate) enum InternalRequest {
     Initialize { id: Option<serde_json::Value> },
     ThreadStart { params: serde_json::Value, id: Option<serde_json::Value> },
     TurnStart { params: serde_json::Value, id: Option<serde_json::Value> },

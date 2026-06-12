@@ -17,7 +17,7 @@ fn trm_generate(prompt: &str, max_tokens: usize) -> String {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (daemon, rx) = app_server::AppServerDaemon::new(1024);
     let stdout = tokio::io::stdout();
 
